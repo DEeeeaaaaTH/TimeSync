@@ -1,0 +1,125 @@
+<script lang="ts">
+	import { supabase } from '$lib/supabaseClient';
+	import { onMount } from 'svelte';
+	
+	let userId = ''; // Will be set when the user is authenticated
+	let buttonText = 'Punch Now'; // Default text for the button
+	let successMessage = ''; // Track success message
+	let errorMessage = ''; // Track error message
+	let punchSubmitted = false; // Track button color and state change
+	
+	onMount(async () => {
+	  // Get the current user ID
+	  const { data: sessionData } = await supabase.auth.getSession();
+	  const user = sessionData?.session?.user;
+  
+	  if (user) {
+		// Fetch the actual user_id from the users table
+		const { data: userData, error } = await supabase
+		  .from('users')
+		  .select('id')
+		  .eq('auth_user_id', user.id)
+		  .single();
+  
+		if (userData && !error) {
+		  userId = userData.id; // Set the actual user ID from the users table
+		  console.log('User ID:', userId); // Debugging log
+		} else {
+		  console.error('Failed to fetch user ID:', error);
+		}
+	  } else {
+		console.error('User is not authenticated');
+	  }
+	});
+  
+	// Handle Punch action (just save the punch)
+	async function handlePunch() {
+	  try {
+		if (!userId) {
+		  errorMessage = 'User ID is not available.';
+		  return;
+		}
+  
+		// Get the current time (local time)
+		const currentTime = new Date();
+		const currentDate = currentTime.toISOString().split('T')[0]; // Extract the date part (YYYY-MM-DD)
+  
+		// Adjust the time to local timezone by using currentTime.toLocaleTimeString()
+		const time = currentTime.toLocaleTimeString('en-US', { hour12: false });
+  
+		// Data that will be passed to Supabase
+		const punchData = {
+		  user_id: userId,
+		  date: currentDate,
+		  time: time
+		};
+  
+		// Log the data being sent to the database
+		console.log('Punch data being sent to database:', punchData);
+  
+		// Save the punch to the database
+		const { error } = await supabase.from('punches').insert([punchData]);
+  
+		if (error) {
+		  console.error('Error recording punch:', error);
+		  errorMessage = 'Error recording punch. Please try again.';
+		  return;
+		}
+  
+		successMessage = 'Punch recorded successfully.';
+		buttonText = '✅ Punch Submitted'; // Change button text
+		punchSubmitted = true; // Set button color to green
+		setTimeout(() => {
+		  buttonText = '🕒 Punch Now'; // Reset button text
+		  punchSubmitted = false; // Reset button color back to blue
+		}, 3000); // Reset after 3 seconds
+	  } catch (error) {
+		console.error('Unexpected error:', error);
+		errorMessage = 'Unexpected error occurred. Please try again.';
+	  }
+	}
+  
+	// Function to submit a missing punch request
+	async function submitMissingPunchRequest() {
+	  const { error } = await supabase.from('missing_punches').insert([
+		{ user_id: userId, requested_at: new Date() }
+	  ]);
+  
+	  if (error) {
+		console.error('Error submitting missing punch request:', error);
+		errorMessage = 'Error submitting missing punch request. Please try again.';
+	  } else {
+		successMessage = 'Missing punch request submitted successfully.';
+	  }
+	}
+  </script>
+  
+  <div class="p-4 text-center">
+	<!-- Punch Button -->
+	<button
+	  on:click={handlePunch}
+	  class={`w-2/3 md:w-1/2 p-4 rounded-md text-lg font-semibold border-2 transition-all duration-300
+		${punchSubmitted ? 'bg-green-600' : 'bg-blue-600'} text-white`}
+	>
+	  {buttonText}
+	</button>
+  
+	<!-- Success/Error Message -->
+	{#if successMessage}
+	  <div class="text-green-600 mt-4">{successMessage}</div>
+	{/if}
+	{#if errorMessage}
+	  <div class="text-red-600 mt-4">{errorMessage}</div>
+	{/if}
+  
+	<!-- Submit Missing Punch Request Button (always visible) -->
+	<div class="flex justify-center mb-4">
+	  <button
+		class="w-2/3 md:w-1/2 p-4 rounded-md bg-yellow-500 text-white font-semibold"
+		on:click={submitMissingPunchRequest}
+	  >
+		Submit Missing Punch Request
+	  </button>
+	</div>
+  </div>
+  
