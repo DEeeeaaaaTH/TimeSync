@@ -17,32 +17,61 @@
     }
   
     async function loadMissingPunches() {
-      loading = true;
-      error = '';
+  loading = true;
+  error = '';
   
-      const { data, error: fetchError } = await supabase
-        .from('missing_punches')
-        .select(`
-          id,
-          date,
-          time,
-          reason,
-          submitted_at,
-          user:user_id (
-            id,
-            name
-          )
-        `);
+  // Get the current authenticated user's data
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   
-      if (fetchError) {
-        error = 'Failed to load missing punches.';
-      } else {
-        missingPunches = data || [];
-        console.log('Fetched missing punches:', missingPunches); // 👈 DEBUG
-      }
+  if (sessionError || !sessionData?.session?.user) {
+    error = 'Failed to fetch the session.';
+    loading = false;
+    return;
+  }
+
+  const userId = sessionData.session.user.id;
+
+  // Fetch the client_id for the logged-in user from the 'users' table
+  const { data: userData, error: userError } = await supabase
+    .from('users')
+    .select('client_id')
+    .eq('auth_user_id', userId)
+    .single();
+
+  if (userError || !userData) {
+    error = 'Failed to fetch user data.';
+    loading = false;
+    return;
+  }
+
+  const clientId = userData.client_id;
+  console.log("Fetched Client ID:", clientId); 
+  // Now, fetch the missing punches for that specific client
+  const { data, error: fetchError } = await supabase
+    .from('missing_punches')
+    .select(`
+      id,
+      date,
+      time,
+      reason,
+      submitted_at,
+      user:user_id (
+        id,
+        name
+      )
+    `)
+    .eq('user.client_id', clientId); // Filter based on the client_id of the logged-in user
   
-      loading = false;
-    }
+  if (fetchError) {
+    error = 'Failed to load missing punches.';
+  } else {
+    missingPunches = data || [];
+    console.log('Fetched missing punches:', missingPunches); // 👈 DEBUG
+  }
+
+  loading = false;
+}
+
   
     async function approvePunch(punch) {
       // First insert into punches table

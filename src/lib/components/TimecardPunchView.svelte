@@ -12,6 +12,7 @@
   export let userId: string;
   export let clientPeriodStart: string;
   export let viewAsEmployee: boolean = false;
+  let hasMissingPunch = false;
 
   let allPunches = [];
   let currentPeriodPunches = [];
@@ -45,39 +46,8 @@
     }
   });
 
-  function getDayBlocks(date) {
-    const iso = date.toISOString().split('T')[0];
-    const dayPunches = allPunches
-      .filter(p => p.date === iso)
-      .map(p => timeToMinutes(p.time))
-      .sort((a, b) => a - b);
+  
 
-    const blocks = [];
-    let i = 0;
-    while (i + 1 < dayPunches.length) {
-      const start = dayPunches[i];
-      const end = dayPunches[i + 1];
-      blocks.push({ type: 'work', start, end });
-      i += 2;
-
-      if (i < dayPunches.length) {
-        const gap = dayPunches[i] - end;
-        if (gap <= 25) {
-          blocks.push({ type: 'break', start: end, end: dayPunches[i] });
-        } else if (gap <= 60) {
-          blocks.push({ type: 'lunch', start: end, end: dayPunches[i] });
-        } else {
-          blocks.push({ type: 'split', start: end, end: dayPunches[i] });
-        }
-      }
-    }
-
-    if (dayPunches.length % 2 !== 0) {
-      blocks.push({ type: 'missing', start: dayPunches[dayPunches.length - 1], end: 1440 });
-    }
-
-    return blocks;
-  }
 
 async function fetchCompanyName() {
   try {
@@ -135,6 +105,7 @@ async function fetchCompanyName() {
     const base = new Date(clientPeriodStart);
     currentPeriodStart = new Date(base);
     currentPeriodStart.setDate(base.getDate() + (periodOffset * 14));
+
   }
 
   async function fetchPunches() {
@@ -147,6 +118,9 @@ async function fetchCompanyName() {
       .order('time', { ascending: true });
 
     allPunches = data || [];
+
+ 
+
     await updateCurrentPeriod();
     await new Promise(resolve => setTimeout(resolve, 500));
     timecardReady = true;
@@ -156,7 +130,9 @@ async function fetchCompanyName() {
     periodOffset += direction;
     setPeriodStart();
     selectedDay = null;
+    hasMissingPunch = false;
     await updateCurrentPeriod();
+
 
     if (currentPeriodStart) {
       dispatch('periodChange', { newPeriodStart: currentPeriodStart.toISOString().split('T')[0] });
@@ -164,20 +140,55 @@ async function fetchCompanyName() {
   }
 
   async function updateCurrentPeriod() {
-    if (!currentPeriodStart) return;
+    if (!currentPeriodStart) {
+        return;
+    }
+
+
     const start = new Date(currentPeriodStart);
     const end = new Date(start);
     end.setDate(start.getDate() + 13);
 
+    // Normalize both start and end to midnight to avoid time-related issues
+    const normalizedStart = new Date(start.setHours(0, 0, 0, 0)); 
+    const normalizedEnd = new Date(end.setHours(23, 59, 59, 999));
+
+    // Log the start and end dates for verification
+
+
+    // Log allPunches to see the raw data
+   
+
+    // Filter the punches by comparing only the date part
     currentPeriodPunches = allPunches.filter(p => {
-      const punchDate = new Date(p.date);
-      return punchDate >= start && punchDate <= end;
-    });
+    const punchDate = new Date(p.date);
+    
+    // Decrement the punch date by one day
+    punchDate.setDate(punchDate.getDate() + 1); 
+    
+    // Normalize the punch date to midnight (time set to 00:00:00)
+    const normalizedPunchDate = new Date(punchDate.setHours(0, 0, 0, 0));
+
+    // Log the comparison
+ 
+    
+    // Check if the punch date is within the range (start to end)
+    const isInRange = normalizedPunchDate >= normalizedStart && normalizedPunchDate <= normalizedEnd;
+   
+    
+    return isInRange;
+});
+
+    // Log the filtered punches
+
 
     await tick();
     buildDayBlocks();
     await checkIfAlreadySigned();
-  }
+}
+
+
+
 
   async function checkIfAlreadySigned() {
     const periodEnd = new Date(currentPeriodStart);
@@ -194,131 +205,198 @@ async function fetchCompanyName() {
     alreadySigned = !!data;
   }
 
-  function buildDayBlocks() {
-    dayBlocks = getPeriodDays().map(day => {
-      const todayPunches = currentPeriodPunches
-        .filter(p => p.date === formatDateLocal(day))
-        .map(p => timeToMinutes(p.time))
-        .sort((a, b) => a - b);
+  function getDayBlocks(date) {
+  // Decrement the date by 1 day for the first iteration
+  const newDate = new Date(date);
+  newDate.setDate(newDate.getDate() - 1);  // Decrement by 1 day
 
-      const blocks = [];
-      let i = 0;
-      while (i + 1 < todayPunches.length) {
-        const start = todayPunches[i];
-        const end = todayPunches[i + 1];
-        blocks.push({ type: 'work', start, end });
-        i += 2;
+  // Format date to ISO without the time portion
+  const iso = newDate.toISOString().split('T')[0];  
 
-        if (i < todayPunches.length) {
-          const gap = todayPunches[i] - end;
-          if (gap <= 25) {
-            blocks.push({ type: 'break', start: end, end: todayPunches[i] });
-          } else if (gap <= 60) {
-            blocks.push({ type: 'lunch', start: end, end: todayPunches[i] });
-          } else {
-            blocks.push({ type: 'split', start: end, end: todayPunches[i] });
-          }
-        }
-      }
 
-      if (todayPunches.length % 2 !== 0) {
-        blocks.push({ type: 'missing', start: todayPunches[todayPunches.length - 1], end: 1440 });
-      }
+  // Get punches for the adjusted date
+  const dayPunches = currentPeriodPunches
+    .filter(p => p.date === iso)  // Ensure the comparison is correct
+    .map(p => timeToMinutes(p.time))
+    .sort((a, b) => a - b);
 
-      return { date: formatDateLocal(day), blocks };
-    });
+  const blocks = [];
+  let i = 0;
+  
+  // Process punch data and create work/lunch/break blocks
+  while (i + 1 < dayPunches.length) {
+    const start = dayPunches[i];
+    const end = dayPunches[i + 1];
+    blocks.push({ type: 'work', start, end });
+    i += 2;
 
-    calculateSummaries();
-  }
-
-  function calculateSummaries() {
-    summaries = [];
-    for (let weekStart of [0, 7]) {
-      let weeklyRegularMins = 0;
-      let workedDays = [];
-
-      for (let i = 0; i < 7; i++) {
-        const dayIndex = weekStart + i;
-        const day = new Date(currentPeriodStart);
-        day.setDate(day.getDate() + dayIndex);
-        const dateStr = formatDateLocal(day);
-
-        const blocks = dayBlocks.find(d => d.date === dateStr)?.blocks || [];
-        const workBlocks = blocks.filter(b => b.type === 'work');
-        const totalWorked = workBlocks.reduce((sum, b) => sum + (b.end - b.start), 0);
-
-        workedDays.push(totalWorked > 0);
-      }
-
-      const fullWeekWorked = workedDays.every(w => w);
-
-      for (let i = 0; i < 7; i++) {
-        const dayIndex = weekStart + i;
-        const day = new Date(currentPeriodStart);
-        day.setDate(day.getDate() + dayIndex);
-        const dateStr = formatDateLocal(day);
-
-        const blocks = dayBlocks.find(d => d.date === dateStr)?.blocks || [];
-        const workBlocks = blocks.filter(b => b.type === 'work');
-        let totalWorked = workBlocks.reduce((sum, b) => sum + (b.end - b.start), 0);
-
-        const summary = {
-          date: dateStr,
-          regular: 0,
-          overtime: 0,
-          doubletime: 0,
-          missingLunch: false,
-          splitShift: false,
-          total: totalWorked
-        };
-
-        const breaks = [];
-        for (let j = 1; j < workBlocks.length; j++) {
-          const prev = workBlocks[j - 1].end;
-          const curr = workBlocks[j].start;
-          breaks.push(curr - prev);
-        }
-
-        const lunch1 = breaks.some(b => b >= 30 && b <= 60);
-        const lunch2 = breaks.filter(b => b >= 30).length >= 2;
-
-        if (totalWorked > 300 && !lunch1) summary.missingLunch = true;
-        if (totalWorked > 600 && !lunch2) summary.missingLunch = true;
-        if (blocks.some(b => b.type === 'split')) summary.splitShift = true;
-
-        let dailyRegular = 0, dailyOvertime = 0, dailyDoubletime = 0;
-        if (totalWorked > 720) {
-          dailyDoubletime = totalWorked - 720;
-          dailyOvertime = 240;
-          dailyRegular = 480;
-        } else if (totalWorked > 480) {
-          dailyOvertime = totalWorked - 480;
-          dailyRegular = 480;
-        } else {
-          dailyRegular = totalWorked;
-        }
-
-        if (i === 6 && fullWeekWorked) {
-          dailyOvertime += dailyRegular;
-          dailyRegular = 0;
-        }
-
-        if (weeklyRegularMins + dailyRegular > 2400) {
-          const overflow = (weeklyRegularMins + dailyRegular) - 2400;
-          dailyRegular -= overflow;
-          dailyOvertime += overflow;
-        }
-
-        weeklyRegularMins += dailyRegular;
-
-        summary.regular = dailyRegular;
-        summary.overtime = dailyOvertime;
-        summary.doubletime = dailyDoubletime;
-
-        summaries.push(summary);
+    if (i < dayPunches.length) {
+      const gap = dayPunches[i] - end;
+      if (gap <= 25) {
+        blocks.push({ type: 'break', start: end, end: dayPunches[i] });
+      } else if (gap <= 60) {
+        blocks.push({ type: 'lunch', start: end, end: dayPunches[i] });
+      } else {
+        blocks.push({ type: 'split', start: end, end: dayPunches[i] });
       }
     }
   }
+
+  // If there is an unpaired punch, mark it as missing
+  if (dayPunches.length % 2 !== 0) {
+    blocks.push({ type: 'missing', start: dayPunches[dayPunches.length - 1], end: 1440 });
+  }
+
+
+  return blocks;
+}
+
+  function buildDayBlocks() {
+  dayBlocks = getPeriodDays().map(day=> {
+
+    const formattedDate = formatDateLocal(day).split('T')[0]; // Format day for comparison
+
+    const todayPunches = currentPeriodPunches
+      .filter(p => {
+        return p.date === formattedDate;  // Ensure the comparison is correct
+      })
+      .map(p => timeToMinutes(p.time))
+      .sort((a, b) => a - b);
+
+
+    const blocks = [];
+    let i = 0;
+
+    while (i+1 < todayPunches.length) {
+      const start = todayPunches[i];
+      const end = todayPunches[i + 1];
+      blocks.push({ type: 'work', start, end });
+      i += 2;
+
+      if (i < todayPunches.length) {
+        const gap = todayPunches[i] - end;
+        if (gap <= 25) {
+          blocks.push({ type: 'break', start: end, end: todayPunches[i] });
+        } else if (gap <= 60) {
+          blocks.push({ type: 'lunch', start: end, end: todayPunches[i] });
+        } else {
+          blocks.push({ type: 'split', start: end, end: todayPunches[i] });
+        }
+      }
+      
+    }
+
+    // Add missing punch if necessary
+    if (todayPunches.length % 2 !== 0) {
+      blocks.push({ type: 'missing', start: todayPunches[todayPunches.length - 1], end: 1440 });
+      hasMissingPunch = true;
+    }
+    // Log to check first day blocks
+
+
+    return { date: formattedDate, blocks };  // Return blocks for each day
+  });
+
+
+  calculateSummaries();
+}
+
+
+
+
+
+
+function calculateSummaries() {
+  summaries = [];
+  for (let weekStart of [0, 7]) {
+    let weeklyRegularMins = 0;
+    let workedDays = [];
+    let splitShiftCounts = [];
+
+    for (let i = 0; i < 7; i++) {
+      const dayIndex = weekStart + i;
+      const day = new Date(currentPeriodStart);
+      day.setDate(day.getDate() + dayIndex);
+      const dateStr = formatDateLocal(day);
+
+      const blocks = dayBlocks.find(d => d.date === dateStr)?.blocks || [];
+      const workBlocks = blocks.filter(b => b.type === 'work');
+      let totalWorked = workBlocks.reduce((sum, b) => sum + (b.end - b.start), 0);
+
+      workedDays.push(totalWorked > 0);
+      splitShiftCounts.push(blocks.filter(b => b.type === 'split').length);  // Count split shifts
+    }
+
+    const fullWeekWorked = workedDays.every(w => w);
+
+    for (let i = 0; i < 7; i++) {
+      const dayIndex = weekStart + i;
+      const day = new Date(currentPeriodStart);
+      day.setDate(day.getDate() + dayIndex);
+      const dateStr = formatDateLocal(day);
+
+      const blocks = dayBlocks.find(d => d.date === dateStr)?.blocks || [];
+      const workBlocks = blocks.filter(b => b.type === 'work');
+      let totalWorked = workBlocks.reduce((sum, b) => sum + (b.end - b.start), 0);
+
+      const summary = {
+        date: dateStr,
+        regular: 0,
+        overtime: 0,
+        doubletime: 0,
+        missingLunch: false,
+        splitShift: splitShiftCounts[i] > 0, // Set split shift status based on the count
+        total: totalWorked,
+        splitShiftCount: splitShiftCounts[i], // Track the number of split shifts
+      };
+
+      const breaks = [];
+      for (let j = 1; j < workBlocks.length; j++) {
+        const prev = workBlocks[j - 1].end;
+        const curr = workBlocks[j].start;
+        breaks.push(curr - prev);
+      }
+
+      const lunch1 = breaks.some(b => b >= 30 && b <= 60);
+      const lunch2 = breaks.filter(b => b >= 30).length >= 2;
+
+      if (totalWorked > 300 && !lunch1) summary.missingLunch = true;
+      if (totalWorked > 600 && !lunch2) summary.missingLunch = true;
+
+      let dailyRegular = 0, dailyOvertime = 0, dailyDoubletime = 0;
+      if (totalWorked > 720) {
+        dailyDoubletime = totalWorked - 720;
+        dailyOvertime = 240;
+        dailyRegular = 480;
+      } else if (totalWorked > 480) {
+        dailyOvertime = totalWorked - 480;
+        dailyRegular = 480;
+      } else {
+        dailyRegular = totalWorked;
+      }
+
+      if (i === 6 && fullWeekWorked) {
+        dailyOvertime += dailyRegular;
+        dailyRegular = 0;
+      }
+
+      if (weeklyRegularMins + dailyRegular > 2400) {
+        const overflow = (weeklyRegularMins + dailyRegular) - 2400;
+        dailyRegular -= overflow;
+        dailyOvertime += overflow;
+      }
+
+      weeklyRegularMins += dailyRegular;
+
+      summary.regular = dailyRegular;
+      summary.overtime = dailyOvertime;
+      summary.doubletime = dailyDoubletime;
+
+      summaries.push(summary);
+    }
+  }
+}
+
 
   function getPeriodDays() {
     if (!currentPeriodStart) return [];
@@ -516,17 +594,26 @@ if (storageError) {
 
   
   
+
+
 <!-- Sign Timecard Button -->
 {#if viewAsEmployee && !alreadySigned}
+  {#if hasMissingPunch}  <!-- Check if there's a missing punch -->
+    <div class="text-red-600 text-center mb-4">
+      ❗ You cannot sign the timecard because there is a missing punch.
+    </div>
+  {/if}
   <div class="flex justify-center mb-4">
     <button
-      class="w-2/3 md:w-1/2 p-4 rounded-md bg-purple-600 hover:bg-purple-700 text-white font-semibold"
-      on:click={() => showSignModal = true}
-    >
-      ✍️ Sign Timecard
-    </button>
+    class="w-2/3 md:w-1/2 p-4 rounded-md 
+      {hasMissingPunch ? 'button-disabled' : 'button-enabled'}"
+    on:click={() => showSignModal = true}
+    disabled={hasMissingPunch}
+  >
+    ✍️ Sign Timecard
+  </button>
   </div>
-  {:else if viewAsEmployee && alreadySigned}
+{:else if viewAsEmployee && alreadySigned}
   <div class="flex flex-col items-center mb-4 space-y-3">
     <span class="text-green-600 font-semibold">✅ Timecard Signed</span>
 
@@ -538,6 +625,8 @@ if (storageError) {
     </button>
   </div>
 {/if}
+
+
 
 <!-- Navigation Buttons -->
 <div class="text-center mb-4 flex justify-center items-center gap-2 flex-wrap">
@@ -623,54 +712,42 @@ if (storageError) {
     </div>
 
      <!-- Summary Grid -->
-     {#if summaries.length > 0}
-     <div class="desktop-timecard timecard-scroll mt-6">
-       <div class="summary-grid">
-         <div class="label-cell font-semibold text-blue-800">Total</div>
-         {#each summaries as s}
-           <div class="value-cell font-semibold">{formatHours(s.total)}</div>
-         {/each}
+{#if summaries.length > 0}
+<div class="desktop-timecard timecard-scroll mt-6">
+  <div class="summary-grid">
+    <div class="label-cell font-semibold text-blue-800">Total</div>
+    {#each summaries as s}
+      <div class="value-cell font-semibold">{formatHours(s.total)}</div>
+    {/each}
 
-         <div class="label-cell">Regular</div>
-         {#each summaries as s}
-           <div class="value-cell">{formatHours(s.regular)}</div>
-         {/each}
+    <div class="label-cell">Regular</div>
+    {#each summaries as s}
+      <div class="value-cell">{formatHours(s.regular)}</div>
+    {/each}
 
-         <div class="label-cell">Overtime</div>
-         {#each summaries as s}
-           <div class="value-cell text-yellow-600">{formatHours(s.overtime)}</div>
-         {/each}
+    <div class="label-cell">Overtime</div>
+    {#each summaries as s}
+      <div class="value-cell text-yellow-600">{formatHours(s.overtime)}</div>
+    {/each}
 
-         <div class="label-cell">Double Time</div>
-         {#each summaries as s}
-           <div class="value-cell text-red-600">{formatHours(s.doubletime)}</div>
-         {/each}
+    <div class="label-cell">Double Time</div>
+    {#each summaries as s}
+      <div class="value-cell text-red-600">{formatHours(s.doubletime)}</div>
+    {/each}
 
-         <div class="label-cell">Missing Lunch</div>
-         {#each summaries as s}
-           <div class="value-cell">{s.missingLunch ? '❌' : '—'}</div>
-         {/each}
+    <div class="label-cell">Missing Lunch</div>
+    {#each summaries as s}
+      <div class="value-cell">{s.missingLunch ? '❌' : '—'}</div>
+    {/each}
 
-         <div class="label-cell">Split Shift</div>
-         {#each summaries as s, i}
-           <div class="value-cell">
-             {#if s.splitShift}
-               <div class="flex flex-col items-center justify-center text-xs">
-                 <label class="inline-flex items-center gap-1">
-                   <input type="radio" name={`award-${i}`} value="yes" on:change={() => awardSplitShift(s.date, true)} />✅
-                 </label>
-                 <label class="inline-flex items-center gap-1">
-                   <input type="radio" name={`award-${i}`} value="no" on:change={() => awardSplitShift(s.date, false)} />❌
-                 </label>
-               </div>
-             {:else}
-               —
-             {/if}
-           </div>
-         {/each}
-       </div>
-     </div>
-   {/if}
+    <div class="label-cell">Split Shift</div>
+    {#each summaries as s}
+      <div class="value-cell">{s.splitShiftCount > 0 ? s.splitShiftCount : '—'}</div> <!-- Show split shift count -->
+    {/each}
+  </div>
+</div>
+{/if}
+
  </div>
 {/if}
 <!-- Sign Modal -->
@@ -923,6 +1000,22 @@ if (storageError) {
 /* Desktop Summary Layout (default) */
 .desktop-summary {
   display: block;
+}
+/* CSS for the disabled (gray) button appearance */
+.button-disabled {
+  background-color: #e0e0e0;  /* Light gray background */
+  cursor: not-allowed;        /* Change the cursor to indicate it's disabled */
+  color: #a0a0a0;             /* Gray text */
+}
+
+/* Standard button (when enabled) */
+.button-enabled {
+  background-color: #6b46c1;  /* Purple background when enabled */
+  color: white;
+}
+
+.button-enabled:hover {
+  background-color: #553c9a;  /* Darker purple on hover */
 }
 
 

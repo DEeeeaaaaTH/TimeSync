@@ -26,22 +26,31 @@
 	}
 
 	function handleCSVUpload(event) {
-		const file = event.target.files[0];
-		if (!file || !periodStartDate) return;
+	const file = event.target.files[0];
+	if (!file || !periodStartDate) return;
 
-		const reader = new FileReader();
-		reader.onload = () => {
+	const reader = new FileReader();
+
+	reader.onload = () => {
+		try {
 			const lines = reader.result.split('\n').map(line => line.trim()).filter(Boolean);
 			const dataLines = lines.slice(1); // skip header
 			const parsed = dataLines.map(line => {
 				const [employeeId, name, date, time] = line.split(',').map(x => x.trim());
 				return { employeeId, name, date, time };
 			});
-			results = processPunches(parsed, periodStartDate); // 👈 skip the table and process directly
-		};
-		reader.readAsText(file);
-	}
+			results = processPunches(parsed, periodStartDate); // Skip the table and process directly
+		} catch (error) {
+			console.error('Error parsing CSV:', error);
+		}
+	};
 
+	reader.onerror = () => {
+		console.error('Error reading file');
+	};
+	
+	reader.readAsText(file);
+}
 	function countAlerts(days, types) {
 		return days.reduce((count, d) => {
 			return count + d.alerts.filter(a => types.includes(a)).length;
